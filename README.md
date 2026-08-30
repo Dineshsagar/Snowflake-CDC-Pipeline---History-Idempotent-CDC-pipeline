@@ -1,0 +1,1 @@
+# Snowflake-CDC-Pipeline---History-Idempotent-CDC-pipeline
