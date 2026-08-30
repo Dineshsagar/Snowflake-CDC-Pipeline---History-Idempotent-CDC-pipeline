@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: silver
+    database: AIRLINE_DL
+    schema: SILVER
+    description: "Current state, loaded by the Snowflake stream+task pipeline (not by dbt)."
+    loaded_at_field: UPDATED_AT
+    freshness:
+      warn_after:  {count: 2, period: hour}    # CDC runs hourly
+      error_after: {count: 6, period: hour}
+    tables:
+      - name: booking
+      - name: reservation
+      - name: claim

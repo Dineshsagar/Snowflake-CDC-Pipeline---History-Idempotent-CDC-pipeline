@@ -1,0 +1,25 @@
+name: 'airline_gold'
+version: '1.0.0'
+profile: 'airline'
+
+model-paths: ["models"]
+
+models:
+  airline_gold:
+    +materialized: table
+    +schema: GOLD
+
+# ---- ~/.dbt/profiles.yml  (never committed) ----
+# airline:
+#   target: dev
+#   outputs:
+#     dev:
+#       type: snowflake
+#       account: ab12345.us-east-1
+#       user: dinesh
+#       authenticator: externalbrowser
+#       role: ACCOUNTADMIN
+#       warehouse: WH_CDC
+#       database: AIRLINE_DL
+#       schema: GOLD
+#       threads: 4

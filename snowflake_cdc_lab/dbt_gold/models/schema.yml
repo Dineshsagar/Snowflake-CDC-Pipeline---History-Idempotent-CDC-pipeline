@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: booking_fact
+    description: "One row per live booking, with reservation and claim rollups."
+    columns:
+      - name: booking_id
+        description: "Primary key."
+        tests:
+          - not_null
+          - unique
+      - name: fare_amount
+        tests:
+          - not_null
+      - name: revenue_band
+        tests:
+          - accepted_values:
+              values: ['HIGH', 'MEDIUM', 'LOW']
+      - name: booking_status
+        tests:
+          - accepted_values:
+              values: ['CONFIRMED', 'PENDING']   # CANCELLED is filtered out upstream
+
+  - name: daily_route_summary
+    description: "Daily bookings and revenue by route and channel. Feeds the dashboard."
+    columns:
+      - name: bookings
+        tests:
+          - not_null

@@ -1,0 +1,191 @@
+================================================================================
+  RUN ORDER
+  Everything runs in the Snowflake web UI (Snowsight). No CLI, no installs.
+================================================================================
+
+PIPELINE:   S3 -> Snowpipe -> RAW -> stream/task -> SILVER -> stream/task -> GOLD -> S3
+            RAW is truncate-and-load (current batch only)
+            SILVER is MERGE on PK (current state)
+            GOLD is business logic (dbt owns this layer)
+
+
+--------------------------------------------------------------------------------
+ BEFORE YOU START
+--------------------------------------------------------------------------------
+ - Log in to the Snowflake trial in the browser.
+ - Know where these two are:
+      Projects > Worksheets      (all SQL goes here)
+      Data     > Databases       (uploading the CSVs)
+ - Read 00_ARCHITECTURE.md once. It's one page. Draw the diagram before you talk.
+
+
+--------------------------------------------------------------------------------
+ STEP 1   ->   01_setup.sql
+--------------------------------------------------------------------------------
+ New worksheet, paste the whole file, run it top to bottom.
+ Creates: WH_CDC, AIRLINE_DL, schemas RAW / SILVER / GOLD / UTIL,
+          3 RAW tables, 3 SILVER tables, GOLD.BOOKING_FACT, UTIL.PIPELINE_LOG.
+ CHECK: the SHOW TABLES at the end lists 8 tables.
+
+
+--------------------------------------------------------------------------------
+ STEP 2   ->   02_snowpipe_raw.sql
+--------------------------------------------------------------------------------
+ 2a) Run the top: file format + stage (down to CREATE STAGE UTIL.STG_LANDING).
+
+ 2b) UPLOAD THE CSVs (this is the only non-SQL step in the whole lab):
+
+     Data > Databases > AIRLINE_DL > UTIL > Stages > STG_LANDING > "+ Files"
+
+        upload the 3 files in  data\fullload\   ->  path box:  fullload
+        upload the 3 files in  data\cdc\        ->  path box:  cdc
+
+     THE PATH BOX IS NOT OPTIONAL. Blank = files land at the root = pipes find nothing.
+
+     No "+ Files" button? The stage needs ENCRYPTION=(TYPE='SNOWFLAKE_SSE').
+     It's already in the script - just re-run that CREATE STAGE and refresh the page.
+
+ 2c) Run the rest: LIST, the 3 CREATE PIPE statements, then the fullload REFRESH.
+     Wait 30-60 seconds.
+ CHECK: 10 / 10 / 5 rows, all with CHANGE_OPER = 'L'.
+
+ TALK: the pipe never names S3. It points at the STAGE; the stage holds the URL.
+       In prod AUTO_INGEST=TRUE and S3 pushes an event to Snowflake's SQS queue.
+
+
+--------------------------------------------------------------------------------
+ STEP 3   ->   03_raw_to_silver.sql          <<< THE MOST IMPORTANT FILE >>>
+--------------------------------------------------------------------------------
+ Run it SLOWLY, statement by statement.
+
+   1. The 3 CREATE STREAM statements.
+      TALK: APPEND_ONLY=TRUE is mandatory because we truncate RAW every batch.
+            A standard stream would turn that truncate into a wave of DELETEs.
+
+   2. CREATE PROCEDURE SILVER.SP_LOAD_SILVER  - read the MERGE out loud.
+      TALK: matched -> update, not matched -> insert, CHANGE_OPER='D' -> soft delete.
+            TRUNCATE lives INSIDE the proc, after the MERGE consumed the stream.
+
+   3. CALL SILVER.SP_LOAD_SILVER();   then check RAW is empty and stream is empty.
+
+   4. The CDC section: REFRESH the pipes with PREFIX='cdc/', wait, look at the
+      I/U/D counts, then CALL the proc again.
+
+ *** THE TEACHING MOMENT ***
+ BK1011 appears TWICE in the CDC batch (insert then update).
+ Delete the QUALIFY ROW_NUMBER lines from the booking MERGE and run it - it fails with
+ "Duplicate row detected during DML action". Put it back and it works.
+ This is the #1 CDC interview question. Spend 5 minutes here.
+
+   5. The TASK section. This is a TRIGGERED task - no SCHEDULE clause, only WHEN.
+      Set CHANGE_TRACKING, create the task, RESUME it, then WAIT 30-60 seconds
+      and watch it fire on its own via TASK_HISTORY and UTIL.PIPELINE_LOG.
+      TALK: scheduled = wakes on a timer and usually skips.
+            triggered = fires when the stream has data. Seconds, not an hour.
+            The commented scheduled version at the bottom is the older pattern -
+            show both and explain why WHEN is a cost guard in that one.
+      Then SUSPEND it before moving on.
+
+ CHECK: BK1011 fare = 910.00 (the later CHANGE_SEQ, not 880.00)
+        BK1005 IS_DELETED = TRUE
+
+
+--------------------------------------------------------------------------------
+ STEP 4   ->   04_silver_to_gold.sql
+--------------------------------------------------------------------------------
+ Run it all.
+ TALK: this stream is NOT append-only - SILVER rows get updated and we care.
+       The 6 transformations are listed in the comment block. That's what makes
+       it GOLD instead of SILVER: joins, derived columns, filters, business rules.
+ CHECK: BK1002 / BK1005 / BK1007 are absent from GOLD (cancelled or deleted).
+        GOLD.V_DAILY_ROUTE returns the dashboard rows.
+ Then create TSK_LOAD_GOLD - it's chained AFTER the silver task (a DAG).
+
+
+--------------------------------------------------------------------------------
+ STEP 5   ->   05_unload_to_s3.sql
+--------------------------------------------------------------------------------
+ Run it all. Unloads GOLD to the outbound stage, reads it back to prove it worked,
+ wraps it in a proc, adds the final task to the DAG.
+ TALK: the commented block at the bottom is the real S3 version with PARTITION BY.
+
+
+--------------------------------------------------------------------------------
+ STEP 6   ->   06_dq_and_ops.sql
+--------------------------------------------------------------------------------
+ Run the DQ proc and look at UTIL.DQ_RESULTS.
+ KEY SENTENCE: "every data quality test is just a SELECT that must return zero rows."
+               That is the bridge into dbt. Say it exactly like that.
+ Then the ops section: pipe status, copy history, task failures, pruning, Time Travel,
+ zero-copy clone.
+ !!! RUN THE CLEANUP BLOCK AT THE BOTTOM - it suspends the tasks and warehouse !!!
+
+
+--------------------------------------------------------------------------------
+ STEP 7   ->   dbt_gold\         (READ ONLY - install nothing)
+--------------------------------------------------------------------------------
+ 20-25 minutes, no more. Open in this order:
+    1. dbt_gold\README.md              - WHY dbt only owns GOLD. Read the mapping table.
+    2. dbt_gold\models\sources.yml     - source() + freshness
+    3. dbt_gold\models\booking_fact.sql - identical logic to SP_LOAD_GOLD, no procedure
+    4. dbt_gold\models\daily_route_summary.sql - ref() creates the DAG
+    5. dbt_gold\models\schema.yml      - the tests from step 6, declared instead of coded
+
+ Keep repeating: "you already wrote this in SQL. dbt just generates it and orders it."
+ Do NOT go past the 4 concepts in the README.
+
+
+--------------------------------------------------------------------------------
+ STEP 8   ->   08_interview_qa.md
+--------------------------------------------------------------------------------
+ Read the questions out loud, make him answer, correct him.
+
+
+--------------------------------------------------------------------------------
+ 07_reset_and_rerun.sql   -   use any time
+--------------------------------------------------------------------------------
+ Wipes all data, recreates the streams, replays full load + CDC end to end,
+ then runs assertions that prove the CDC worked. Use it to practise before the
+ session, or to re-demo cleanly. Does NOT drop objects, so it's safe.
+
+
+================================================================================
+ FILE MAP
+================================================================================
+ 00_ARCHITECTURE.md        read first - the diagram and the design decisions
+ 01_setup.sql              RUN 1
+ 02_snowpipe_raw.sql       RUN 2   (+ the UI file upload)
+ 03_raw_to_silver.sql      RUN 3   <-- most important
+ 04_silver_to_gold.sql     RUN 4
+ 05_unload_to_s3.sql       RUN 5
+ 06_dq_and_ops.sql         RUN 6   (+ cleanup)
+ 07_reset_and_rerun.sql    replay the whole thing whenever you want
+ dbt_gold\                 READ ONLY
+ 08_interview_qa.md        READ ONLY
+ data\fullload\            3 CSVs -> stage path  fullload
+ data\cdc\                 3 CSVs -> stage path  cdc
+
+
+================================================================================
+ IF SOMETHING BREAKS
+================================================================================
+ "SQL access control error" ............ USE ROLE ACCOUNTADMIN;
+ "No active warehouse selected" ........ USE WAREHOUSE WH_CDC;
+ "Object does not exist" ............... USE SCHEMA AIRLINE_DL.RAW;  (or SILVER/GOLD/UTIL)
+ No "+ Files" button ................... stage needs ENCRYPTION=(TYPE='SNOWFLAKE_SSE').
+                                         Re-run CREATE STAGE, refresh browser.
+ LIST shows files at the root .......... path box was left blank. Re-upload.
+ Pipe loaded nothing ................... wait 60s, then SYSTEM$PIPE_STATUS('RAW.PIPE_BOOKING')
+                                         Snowpipe skips file names it saw in the last
+                                         14 days - use 07_reset_and_rerun.sql (FORCE=TRUE).
+ "Duplicate row detected during DML" ... the QUALIFY dedupe is missing. This is the lesson.
+ Stream is empty when it shouldn't be .. it was consumed already, or created after the
+                                         rows landed. Run 07_reset_and_rerun.sql.
+ Triggered task never fires ............ 1) is it RESUMED?  SHOW TASKS IN SCHEMA SILVER;
+                                         2) SELECT SYSTEM$STREAM_HAS_DATA('SILVER.STR_BOOKING');
+                                         3) CHANGE_TRACKING on the RAW tables?
+                                         4) TASK_HISTORY ERROR_MESSAGE column.
+                                         Give it 30-60s - min trigger interval is 30s.
+ Start completely over ................. DROP DATABASE AIRLINE_DL; then go to STEP 1
+                                         (you'll need to re-upload the CSVs).
+================================================================================
