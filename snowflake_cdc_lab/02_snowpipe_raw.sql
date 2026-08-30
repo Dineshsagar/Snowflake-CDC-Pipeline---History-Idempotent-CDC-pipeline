@@ -43,16 +43,6 @@ Properties > Event notifications > s3:ObjectCreated:* > SQS > paste ARN.
 ------------------------------------------------------------ */
 
 
-/* =========================================================
-   UPLOAD THE FILES (Snowsight UI)
-
-   Data > Databases > AIRLINE_DL > UTIL > Stages > STG_LANDING > "+ Files"
-
-     upload data\fullload\*.csv   with path:  fullload
-     upload data\cdc\*.csv        with path:  cdc
-
-   The path box is NOT optional - blank means the pipes find nothing.
-   ========================================================= */
 
 LIST @UTIL.STG_LANDING;     -- expect 6 files
 
