@@ -8,6 +8,8 @@ USE ROLE ACCOUNTADMIN;
 USE WAREHOUSE WH_CDC;
 USE SCHEMA AIRLINE_DL.SILVER;
 
+Test fpr streams
+
 /* ---------- STREAMS ----------
    APPEND_ONLY = TRUE is MANDATORY here, not a preference.
    RAW gets truncated after every batch. A standard stream would report those
