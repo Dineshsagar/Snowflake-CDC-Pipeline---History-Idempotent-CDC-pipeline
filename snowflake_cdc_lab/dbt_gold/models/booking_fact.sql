@@ -33,7 +33,7 @@ claims as (
     group by booking_id
 
 )
-
+## register the final select statement as a table in the GOLD schema. The table will be named booking_fact and will contain the following columns:
 select
     b.booking_id,
     b.passenger_id,
