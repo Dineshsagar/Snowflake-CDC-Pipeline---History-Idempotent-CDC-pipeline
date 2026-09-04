@@ -10,6 +10,8 @@ USE SCHEMA AIRLINE_DL.SILVER;
 
 
 
+
+
 Test fpr streams:  SELECT * FROM SILVER.STR_BOOKING;
 /* ---------- STREAMS ----------
    APPEND_ONLY = TRUE is MANDATORY here, not a preference.
