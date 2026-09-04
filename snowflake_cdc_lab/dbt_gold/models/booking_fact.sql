@@ -10,6 +10,8 @@ with booking as (
 
 ),
 
+## testing the join to reservation and claim tables. The join is done on booking_id, which is the primary key of booking table and foreign key in reservation and claim tables.
+
 reservation as (
 
     select booking_id, cabin_class, checked_in
